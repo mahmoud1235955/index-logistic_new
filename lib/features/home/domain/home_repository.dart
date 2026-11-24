@@ -6,3 +6,11 @@ abstract interface class HomeRepository {
 
   Future<List<Company>> getFeaturedCompanies();
 }
+
+enum HomeRepositoryFailureKind { error, offline, expired, permissionDenied }
+
+class HomeRepositoryException implements Exception {
+  const HomeRepositoryException(this.kind);
+
+  final HomeRepositoryFailureKind kind;
+}

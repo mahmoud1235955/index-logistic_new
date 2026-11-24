@@ -2,101 +2,401 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/localization/app_copy.dart';
+import '../../../core/state/app_view_state.dart';
 import '../../../core/theme/app_tokens.dart';
-import '../../../core/widgets/index_button.dart';
+import '../../../core/widgets/app_state_panel.dart';
 import '../../../core/widgets/index_search_field.dart';
 import '../../../core/widgets/section_heading.dart';
+import '../../catalog/presentation/catalog_screen.dart';
+import '../../journeys/domain/local_workspace.dart';
+import '../../journeys/presentation/account_workspace.dart';
+import '../../journeys/presentation/commercial_board.dart';
+import '../../journeys/presentation/directory_workspace.dart';
+import '../../journeys/presentation/workspace_widgets.dart';
+import '../../vehicle/presentation/vehicle_screen.dart';
 import '../../../features/directory/domain/company.dart';
+import '../../../features/directory/presentation/company_card.dart';
+import '../../../features/directory/presentation/company_details_screen.dart';
+import '../domain/home_entry_point.dart';
 import '../domain/sector.dart';
 import 'cubit/home_cubit.dart';
 import 'cubit/home_state.dart';
+import 'entry_point_preview_screen.dart';
+import 'initial_tab_screen.dart';
+import 'sector_details_screen.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
     required this.language,
     required this.onToggleLanguage,
   });
+
   final AppLanguage language;
   final VoidCallback onToggleLanguage;
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  late final TextEditingController _searchController;
+  final _workspace = LocalWorkspace();
+
+  AppLanguage get language => widget.language;
+  VoidCallback get onToggleLanguage => widget.onToggleLanguage;
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _workspace.close();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final copy = AppCopy(language);
     return BlocBuilder<HomeCubit, HomeState>(
-      builder: (context, homeState) => LayoutBuilder(
-        builder: (context, constraints) {
-          final mobile = constraints.maxWidth < 760;
-          final tablet = constraints.maxWidth < 1080;
-          return Scaffold(
-            appBar: mobile ? _mobileBar(context, copy) : null,
-            body: Column(
-              children: [
-                if (!mobile) _desktopHeader(context, copy, tablet),
-                Expanded(
-                  child: CustomScrollView(
-                    slivers: [
-                      SliverToBoxAdapter(
-                        child: Center(
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(
-                              maxWidth: AppTokens.maxContentWidth,
-                            ),
-                            child: Padding(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: mobile
-                                    ? 18
-                                    : tablet
-                                    ? 28
-                                    : 48,
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  const SizedBox(height: 26),
-                      _hero(
+      builder: (context, homeState) {
+        if (_searchController.text != homeState.searchQuery) {
+          _searchController.value = TextEditingValue(
+            text: homeState.searchQuery,
+            selection: TextSelection.collapsed(
+              offset: homeState.searchQuery.length,
+            ),
+          );
+        }
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final mobile = constraints.maxWidth < 760;
+            final tablet = constraints.maxWidth < 1080;
+            return PopScope<Object?>(
+              canPop: homeState.selectedTab == 0,
+              onPopInvokedWithResult: (didPop, _) {
+                if (!didPop && homeState.selectedTab != 0) {
+                  context.read<HomeCubit>().selectTab(0);
+                }
+              },
+              child: Scaffold(
+                appBar: mobile ? _mobileBar(context, copy) : null,
+                body: Column(
+                  children: [
+                    if (!mobile)
+                      _desktopHeader(
                         context,
                         copy,
-                        mobile,
-                        compact: constraints.maxWidth < 900,
+                        tablet,
+                        homeState.selectedTab,
                       ),
-                                  const SizedBox(height: 40),
-                                  if (homeState.status ==
-                                      HomeStatus.loaded) ...[
-                                    _sectors(
-                                      context,
-                                      copy,
-                                      mobile,
-                                      homeState.sectors,
-                                    ),
-                                    const SizedBox(height: 44),
-                                    _companies(
-                                      context,
-                                      copy,
-                                      mobile,
-                                      homeState.featuredCompanies,
-                                    ),
-                                  ] else
-                                    _homeStatusContent(homeState, copy),
-                                  const SizedBox(height: 48),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
+                    Expanded(
+                      child: _tabContent(
+                        context,
+                        copy,
+                        homeState,
+                        mobile: mobile,
+                        tablet: tablet,
                       ),
-                      SliverToBoxAdapter(child: _footer(context, copy)),
-                    ],
+                    ),
+                  ],
+                ),
+                bottomNavigationBar: mobile
+                    ? _mobileNavigation(context, copy, homeState.selectedTab)
+                    : null,
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _tabContent(
+    BuildContext context,
+    AppCopy copy,
+    HomeState state, {
+    required bool mobile,
+    required bool tablet,
+  }) {
+    return switch (state.selectedTab) {
+      0 => _homePage(context, copy, state, mobile: mobile, tablet: tablet),
+      1 => _discoverPage(context, copy, state, mobile: mobile, tablet: tablet),
+      2 => InitialTabScreen(
+        title: copy.communityTab,
+        description: copy.communityDescription,
+        icon: Icons.groups_outlined,
+        emptyMessage: copy.communityDescription,
+        copy: copy,
+        actionLabel: copy.discoverTab,
+        onAction: () => context.read<HomeCubit>().selectTab(1),
+        actions: [
+          WorkspaceLink(
+            key: const ValueKey('community-board-entry'),
+            label: copy.local(
+              'Browse commercial community preview',
+              'تصفح معاينة المجتمع التجاري',
+            ),
+            onTap: () => openWorkspace(
+              context,
+              CommercialBoard(copy: copy, workspace: _workspace),
+            ),
+          ),
+        ],
+      ),
+      3 => InitialTabScreen(
+        title: copy.messagesTab,
+        description: copy.messagesDescription,
+        icon: Icons.forum_outlined,
+        emptyMessage: copy.messagesDescription,
+        copy: copy,
+        actionLabel: copy.homeLabel,
+        onAction: () => context.read<HomeCubit>().selectTab(0),
+        actions: [
+          WorkspaceLink(
+            key: const ValueKey('messages-preview-entry'),
+            label: copy.local(
+              'Open local conversations',
+              'افتح المحادثات المحلية',
+            ),
+            onTap: () => openWorkspace(
+              context,
+              MessagesWorkspace(copy: copy, workspace: _workspace),
+            ),
+          ),
+        ],
+      ),
+      _ => InitialTabScreen(
+        title: copy.myAccountTab,
+        description: copy.accountDescription,
+        icon: Icons.person_outline_rounded,
+        showVisitorMode: true,
+        copy: copy,
+        emptyMessage: copy.accountDescription,
+        actionLabel: copy.homeLabel,
+        onAction: () => context.read<HomeCubit>().selectTab(0),
+        actions: [
+          WorkspaceLink(
+            key: const ValueKey('account-preview-entry'),
+            label: copy.local('Open account workspace', 'افتح مساحة الحساب'),
+            onTap: () => openWorkspace(
+              context,
+              AccountWorkspace(
+                copy: copy,
+                workspace: _workspace,
+                onToggleLanguage: onToggleLanguage,
+              ),
+            ),
+          ),
+        ],
+      ),
+    };
+  }
+
+  Widget _homePage(
+    BuildContext context,
+    AppCopy copy,
+    HomeState state, {
+    required bool mobile,
+    required bool tablet,
+  }) {
+    final cubit = context.read<HomeCubit>();
+    return CustomScrollView(
+      key: const ValueKey('home-page-scroll'),
+      slivers: [
+        SliverToBoxAdapter(
+          child: _contentFrame(
+            mobile: mobile,
+            tablet: tablet,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const SizedBox(height: 18),
+                _welcomeBanner(context, copy),
+                const SizedBox(height: 22),
+                _entryPoints(
+                  context,
+                  copy,
+                  mobile: mobile,
+                  tablet: tablet,
+                  onDiscover: () => cubit.selectTab(1),
+                ),
+                const SizedBox(height: 16),
+                CatalogShortcut(
+                  key: const ValueKey('home-catalog-shortcut'),
+                  copy: copy,
+                  workspace: (
+                    session: _workspace,
+                    sectors: state.sectors,
+                    companies: state.featuredCompanies,
                   ),
                 ),
+                const SizedBox(height: 32),
+                if (state.status == HomeStatus.loaded) ...[
+                  _sectors(
+                    context,
+                    copy,
+                    state.sectors,
+                    mobile: mobile,
+                    onSectorSelected: (sector) => _openSector(
+                      context,
+                      copy,
+                      sector,
+                      state.featuredCompanies,
+                    ),
+                    onSeeAll: () => cubit.selectTab(1),
+                  ),
+                  const SizedBox(height: 38),
+                  _companies(
+                    context,
+                    copy,
+                    state.featuredCompanies,
+                    mobile: mobile,
+                    tablet: tablet,
+                    onSeeAll: () {
+                      cubit.setSearchQuery('');
+                      cubit.selectTab(1);
+                    },
+                  ),
+                ] else
+                  _homeStatusContent(context, state, copy),
+                const SizedBox(height: 40),
               ],
             ),
-            bottomNavigationBar: mobile
-                ? _mobileNav(context, copy, homeState.selectedTab)
-                : null,
-          );
-        },
-      ),
+          ),
+        ),
+        SliverToBoxAdapter(child: _footer(context, copy)),
+      ],
+    );
+  }
+
+  Widget _discoverPage(
+    BuildContext context,
+    AppCopy copy,
+    HomeState state, {
+    required bool mobile,
+    required bool tablet,
+  }) {
+    final query = state.searchQuery.trim().toLowerCase();
+    final sectors = state.sectors.where((sector) {
+      return query.isEmpty ||
+          sector.titleEn.toLowerCase().contains(query) ||
+          sector.titleAr.contains(state.searchQuery.trim());
+    }).toList();
+    final companies = state.featuredCompanies.where((company) {
+      return query.isEmpty ||
+          company.name.toLowerCase().contains(query) ||
+          company.businessActivity.toLowerCase().contains(query) ||
+          (company.productCategory?.toLowerCase().contains(query) ?? false) ||
+          (company.country?.toLowerCase().contains(query) ?? false) ||
+          company.location.toLowerCase().contains(query);
+    }).toList();
+
+    return CustomScrollView(
+      key: const ValueKey('discover-page-scroll'),
+      slivers: [
+        SliverToBoxAdapter(
+          child: _contentFrame(
+            mobile: mobile,
+            tablet: tablet,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const SizedBox(height: 24),
+                _pageHeading(
+                  context,
+                  copy.discoverTab,
+                  copy.discoverDescription,
+                ),
+                const SizedBox(height: 20),
+                IndexSearchField(
+                  hint: copy.searchHint,
+                  controller: _searchController,
+                  onChanged: context.read<HomeCubit>().setSearchQuery,
+                  onSubmitted: (_) => FocusScope.of(context).unfocus(),
+                ),
+                const SizedBox(height: 16),
+                CatalogShortcut(
+                  key: const ValueKey('discover-catalog-shortcut'),
+                  copy: copy,
+                  workspace: (
+                    session: _workspace,
+                    sectors: state.sectors,
+                    companies: state.featuredCompanies,
+                  ),
+                ),
+                if (state.status == HomeStatus.loaded) ...[
+                  const SizedBox(height: 12),
+                  WorkspaceLink(
+                    key: const ValueKey('sector-filter-entry'),
+                    label: copy.local(
+                      'Industry sector filters',
+                      'مرشحات قطاعات الصناعة',
+                    ),
+                    onTap: () => openWorkspace(
+                      context,
+                      DirectoryWorkspace(
+                        copy: copy,
+                        workspace: _workspace,
+                        sectors: state.sectors,
+                        companies: state.featuredCompanies,
+                        sectorsFirst: true,
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 28),
+                if (state.status != HomeStatus.loaded)
+                  _homeStatusContent(context, state, copy)
+                else ...[
+                  if (sectors.isNotEmpty)
+                    _sectors(
+                      context,
+                      copy,
+                      sectors,
+                      mobile: mobile,
+                      onSectorSelected: (sector) => _openSector(
+                        context,
+                        copy,
+                        sector,
+                        state.featuredCompanies,
+                      ),
+                      onSeeAll: () =>
+                          context.read<HomeCubit>().setSearchQuery(''),
+                    ),
+                  if (companies.isNotEmpty) ...[
+                    const SizedBox(height: 32),
+                    _companies(
+                      context,
+                      copy,
+                      companies,
+                      mobile: mobile,
+                      tablet: tablet,
+                      onSeeAll: () =>
+                          context.read<HomeCubit>().setSearchQuery(''),
+                    ),
+                  ],
+                  if (sectors.isEmpty && companies.isEmpty)
+                    AppStatePanel(
+                      state: AppViewState.empty,
+                      copy: copy,
+                      message: copy.noResults,
+                      actionLabel: copy.clearSearch,
+                      onAction: () =>
+                          context.read<HomeCubit>().setSearchQuery(''),
+                    ),
+                ],
+                const SizedBox(height: 40),
+              ],
+            ),
+          ),
+        ),
+        SliverToBoxAdapter(child: _footer(context, copy)),
+      ],
     );
   }
 
@@ -119,55 +419,98 @@ class HomeScreen extends StatelessWidget {
     ],
   );
 
-  Widget _desktopHeader(BuildContext context, AppCopy copy, bool tablet) =>
-      Container(
-        color: AppTokens.white,
-        child: SafeArea(
-          bottom: false,
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(
-                maxWidth: AppTokens.maxContentWidth,
+  Widget _desktopHeader(
+    BuildContext context,
+    AppCopy copy,
+    bool tablet,
+    int selectedTab,
+  ) {
+    final cubit = context.read<HomeCubit>();
+    final labels = [
+      copy.homeTab,
+      copy.discoverTab,
+      copy.communityTab,
+      copy.messagesTab,
+      copy.myAccountTab,
+    ];
+    return Container(
+      color: AppTokens.white,
+      child: SafeArea(
+        bottom: false,
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(
+              maxWidth: AppTokens.maxContentWidth,
+            ),
+            child: Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: tablet ? 20 : 40,
+                vertical: 10,
               ),
-              child: Padding(
-                padding: EdgeInsets.symmetric(
-                  horizontal: tablet ? 28 : 48,
-                  vertical: 15,
-                ),
-                child: Wrap(
-                  alignment: WrapAlignment.spaceBetween,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  spacing: tablet ? 8 : 12,
-                  runSpacing: 8,
-                  children: [
-                    _brand(copy),
-                    if (!tablet)
-                      SizedBox(
-                        width: 240,
-                        child: IndexSearchField(
-                          hint: copy.searchHint,
-                          compact: true,
-                        ),
+              child: Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  _brand(copy),
+                  if (!tablet)
+                    SizedBox(
+                      width: 210,
+                      child: IndexSearchField(
+                        hint: copy.searchHint,
+                        compact: true,
+                        controller: _searchController,
+                        onChanged: cubit.setSearchQuery,
+                        onSubmitted: (_) => cubit.selectTab(1),
                       ),
-                    _navLink(copy.network, true),
-                    _navLink(copy.directory, false),
-                    if (!tablet) _navLink(copy.opportunities, false),
-                    if (!tablet) _navLink(copy.insights, false),
-                    TextButton(
-                      onPressed: onToggleLanguage,
-                      child: Text(copy.languageButton),
                     ),
-                    TextButton(onPressed: () {}, child: Text(copy.signIn)),
-                    IndexButton(label: copy.join, onPressed: () {}),
-                  ],
-                ),
+                  for (var index = 0; index < labels.length; index++)
+                    _navLink(
+                      labels[index],
+                      selectedTab == index,
+                      () => cubit.selectTab(index),
+                    ),
+                  TextButton(
+                    onPressed: onToggleLanguage,
+                    child: Text(copy.languageButton),
+                  ),
+                  _visitorBadge(context, copy),
+                ],
               ),
             ),
           ),
         ),
-      );
+      ),
+    );
+  }
 
-  Widget _brand(AppCopy copy, {bool compact = false}) => Row(
+  Widget _visitorBadge(BuildContext context, AppCopy copy) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+    decoration: BoxDecoration(
+      color: AppTokens.canvas,
+      borderRadius: BorderRadius.circular(AppTokens.radiusPill),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(Icons.visibility_outlined, size: 16, color: AppTokens.muted),
+        const SizedBox(width: 6),
+        Text(
+          copy.visitorMode,
+          style: Theme.of(
+            context,
+          ).textTheme.labelLarge?.copyWith(color: AppTokens.navy),
+        ),
+      ],
+    ),
+  );
+
+  Widget _brand(
+    AppCopy copy, {
+    bool compact = false,
+    bool onDarkSurface = false,
+  }) => Row(
     mainAxisSize: MainAxisSize.min,
     children: [
       Container(
@@ -186,22 +529,22 @@ class HomeScreen extends StatelessWidget {
         children: [
           Text(
             copy.brand,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 15,
               letterSpacing: 1.7,
               height: 1.1,
               fontWeight: FontWeight.w800,
-              color: AppTokens.navy,
+              color: onDarkSurface ? AppTokens.white : AppTokens.navy,
             ),
           ),
           Text(
             copy.brandSub,
-            style: const TextStyle(
-              fontSize: 8,
-              letterSpacing: 2.1,
+            style: TextStyle(
+              fontSize: 9,
+              letterSpacing: 1.8,
               height: 1.45,
               fontWeight: FontWeight.w700,
-              color: AppTokens.muted,
+              color: onDarkSurface ? const Color(0xFFD7E1E8) : AppTokens.muted,
             ),
           ),
         ],
@@ -209,574 +552,457 @@ class HomeScreen extends StatelessWidget {
     ],
   );
 
-  Widget _navLink(String label, bool selected) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 11),
-    child: TextButton(
-      onPressed: () {},
-      style: TextButton.styleFrom(
-        foregroundColor: selected ? AppTokens.navy : AppTokens.muted,
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+  Widget _navLink(String label, bool selected, VoidCallback onPressed) =>
+      TextButton(
+        onPressed: onPressed,
+        style: TextButton.styleFrom(
+          foregroundColor: selected ? AppTokens.navy : AppTokens.muted,
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 12),
         ),
-      ),
-    ),
-  );
-
-  Widget _hero(
-    BuildContext context,
-    AppCopy copy,
-    bool mobile, {
-    bool compact = false,
-  }) {
-    final titleSize = mobile ? 34.0 : compact ? 38.0 : 49.0;
-    return Container(
-      clipBehavior: Clip.antiAlias,
-      decoration: BoxDecoration(
-        color: AppTokens.navyDeep,
-        borderRadius: BorderRadius.circular(mobile ? 20 : 28),
-      ),
-      child: Stack(
-        children: [
-          Positioned(
-            top: -95,
-            right: -60,
-            child: Container(
-              width: 330,
-              height: 330,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: Colors.white.withValues(alpha: .07),
-                  width: 1,
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            bottom: -165,
-            right: 165,
-            child: Container(
-              width: 390,
-              height: 390,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: Colors.white.withValues(alpha: .06),
-                  width: 1,
-                ),
-              ),
-            ),
-          ),
-          Padding(
-            padding: EdgeInsets.all(mobile ? 24 : 54),
-            child: mobile
-                ? Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _eyebrow(copy),
-                      const SizedBox(height: 24),
-                      Text(
-                        copy.heroTitle,
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: titleSize,
-                          height: 1.14,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -.7,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        copy.heroBody,
-                        style: const TextStyle(
-                          color: Color(0xFFCBD7E1),
-                          fontSize: 15,
-                          height: 1.75,
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-                      Wrap(
-                        spacing: 10,
-                        runSpacing: 10,
-                        children: [
-                          IndexButton(
-                            label: copy.explore,
-                            onPressed: () {},
-                            icon: Icons.arrow_forward_rounded,
-                          ),
-                          IndexButton(
-                            label: copy.becomePartner,
-                            secondary: true,
-                            onPressed: () {},
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 30),
-                      _routeArtwork(compact: true),
-                    ],
-                  )
-                : Row(
-                    children: [
-                      Expanded(
-                        flex: 6,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _eyebrow(copy),
-                            const SizedBox(height: 25),
-                            Text(
-                              copy.heroTitle,
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: titleSize,
-                                height: 1.12,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: -.8,
-                              ),
-                            ),
-                            const SizedBox(height: 18),
-                            ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 500),
-                              child: Text(
-                                copy.heroBody,
-                                style: const TextStyle(
-                                  color: Color(0xFFCBD7E1),
-                                  fontSize: 16,
-                                  height: 1.8,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 28),
-                            Wrap(
-                              spacing: 12,
-                              runSpacing: 10,
-                              children: [
-                                IndexButton(
-                                  label: copy.explore,
-                                  onPressed: () {},
-                                  icon: Icons.arrow_forward_rounded,
-                                ),
-                                IndexButton(
-                                  label: copy.becomePartner,
-                                  secondary: true,
-                                  onPressed: () {},
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 28),
-                      Expanded(flex: 5, child: _routeArtwork()),
-                    ],
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _eyebrow(AppCopy copy) => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Container(
-        width: 7,
-        height: 7,
-        decoration: const BoxDecoration(
-          color: Color(0xFF5CC49E),
-          shape: BoxShape.circle,
-        ),
-      ),
-      const SizedBox(width: 10),
-      Flexible(
         child: Text(
-          copy.eyebrow,
-          style: const TextStyle(
-            color: Color(0xFFB5C8D8),
-            fontSize: 10,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 1.05,
-          ),
-        ),
-      ),
-    ],
-  );
-
-  Widget _routeArtwork({bool compact = false}) => AspectRatio(
-    aspectRatio: compact ? 1.65 : 1.35,
-    child: Stack(
-      alignment: Alignment.center,
-      children: [
-        Container(
-          decoration: BoxDecoration(
-            gradient: RadialGradient(
-              colors: [
-                const Color(0xFF264B66).withValues(alpha: .85),
-                AppTokens.navyDeep.withValues(alpha: .1),
-              ],
-            ),
-          ),
-        ),
-        CustomPaint(painter: _RoutePainter(), size: Size.infinite),
-        _routeNode(
-          Alignment.centerLeft,
-          Icons.factory_outlined,
-          'ORIGIN',
-          'Shanghai',
-        ),
-        _routeNode(
-          Alignment.centerRight,
-          Icons.apartment_rounded,
-          'DESTINATION',
-          'Rotterdam',
-        ),
-        Align(
-          alignment: const Alignment(0, -.03),
-          child: Container(
-            width: 64,
-            height: 64,
-            decoration: BoxDecoration(
-              color: const Color(0xFF1B3B54),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: Colors.white.withValues(alpha: .14)),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: .16),
-                  blurRadius: 24,
-                ),
-              ],
-            ),
-            child: const Icon(
-              Icons.public_rounded,
-              color: Color(0xFFB8D9D0),
-              size: 32,
-            ),
-          ),
-        ),
-        Positioned(
-          top: 16,
-          right: 20,
-          child: _floatingTag(Icons.south_rounded, '12,850 km'),
-        ),
-        Positioned(
-          bottom: 18,
-          left: 25,
-          child: _floatingTag(Icons.inventory_2_outlined, 'GLOBAL TRADE'),
-        ),
-      ],
-    ),
-  );
-
-  Widget _routeNode(
-    Alignment alignment,
-    IconData icon,
-    String eyebrow,
-    String place,
-  ) => Align(
-    alignment: alignment,
-    child: Container(
-      margin: const EdgeInsets.symmetric(horizontal: 4),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF18364E),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white.withValues(alpha: .14)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, color: const Color(0xFFB8D9D0), size: 19),
-          const SizedBox(width: 9),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                eyebrow,
-                style: const TextStyle(
-                  color: Color(0xFF9CB0BF),
-                  fontSize: 8,
-                  letterSpacing: 1,
-                ),
-              ),
-              Text(
-                place,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    ),
-  );
-
-  Widget _floatingTag(IconData icon, String label) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-    decoration: BoxDecoration(
-      color: const Color(0xFF18364E),
-      borderRadius: BorderRadius.circular(30),
-      border: Border.all(color: Colors.white.withValues(alpha: .12)),
-    ),
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 12, color: const Color(0xFF93CDB8)),
-        const SizedBox(width: 6),
-        Text(
           label,
-          style: const TextStyle(
-            color: Color(0xFFDAE5EC),
-            fontSize: 9,
-            letterSpacing: .5,
-          ),
-        ),
-      ],
-    ),
-  );
-
-  Widget _sectors(
-    BuildContext context,
-    AppCopy copy,
-    bool mobile,
-    List<Sector> sectors,
-  ) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        SectionHeading(
-          title: copy.sectorsTitle,
-          subtitle: copy.sectorsSubtitle,
-          action: copy.seeAll,
-        ),
-        GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: sectors.length,
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: mobile ? 2 : 4,
-            mainAxisExtent: mobile ? 82 : 92,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-          ),
-          itemBuilder: (context, index) =>
-              _sectorCard(context, sectors[index], copy.isArabic),
-        ),
-      ],
-    );
-  }
-
-  Widget _sectorCard(BuildContext context, Sector sector, bool arabic) =>
-      Material(
-        color: AppTokens.white,
-        borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-        child: InkWell(
-          onTap: () {},
-          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 15),
-            decoration: BoxDecoration(
-              border: Border.all(color: AppTokens.line),
-              borderRadius: BorderRadius.circular(AppTokens.radiusMd),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: sector.tint,
-                    borderRadius: BorderRadius.circular(13),
-                  ),
-                  child: Icon(sector.icon, color: AppTokens.navy, size: 22),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    arabic ? sector.titleAr : sector.titleEn,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(
-                      context,
-                    ).textTheme.titleMedium?.copyWith(fontSize: 13),
-                  ),
-                ),
-                Icon(
-                  arabic
-                      ? Icons.arrow_back_ios_new_rounded
-                      : Icons.arrow_forward_ios_rounded,
-                  size: 13,
-                  color: AppTokens.muted,
-                ),
-              ],
-            ),
+          style: TextStyle(
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
           ),
         ),
       );
 
-  Widget _companies(
+  Widget _welcomeBanner(BuildContext context, AppCopy copy) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 19),
+    decoration: BoxDecoration(
+      color: AppTokens.navyDeep,
+      borderRadius: BorderRadius.circular(AppTokens.radiusLg),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          copy.homeWelcomeTitle,
+          style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+            color: Colors.white,
+            fontSize: 25,
+          ),
+        ),
+        const SizedBox(height: 5),
+        Text(
+          copy.homeWelcomeBody,
+          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+            color: const Color(0xFFD7E1E8),
+            fontSize: 14,
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _entryPoints(
     BuildContext context,
-    AppCopy copy,
-    bool mobile,
-    List<Company> companies,
-  ) {
+    AppCopy copy, {
+    required bool mobile,
+    required bool tablet,
+    required VoidCallback onDiscover,
+  }) {
+    const points = HomeEntryPoint.values;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         SectionHeading(
-          title: copy.featuredTitle,
-          subtitle: copy.featuredSubtitle,
+          title: copy.quickAccess,
+          subtitle: copy.entryPointSubtitle,
           action: copy.seeAll,
+          onAction: onDiscover,
         ),
+        GridView.builder(
+          key: const ValueKey('home-entry-points'),
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: points.length,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: mobile
+                ? 2
+                : tablet
+                ? 3
+                : 3,
+            mainAxisExtent: _scaledCardHeight(context, mobile ? 94 : 98),
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+          ),
+          itemBuilder: (context, index) {
+            final point = points[index];
+            return _entryPointCard(
+              context,
+              copy,
+              point,
+              mobile: mobile,
+              onTap: () => _openEntryPoint(context, copy, point),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _entryPointCard(
+    BuildContext context,
+    AppCopy copy,
+    HomeEntryPoint point, {
+    required bool mobile,
+    required VoidCallback onTap,
+  }) => Material(
+    color: AppTokens.white,
+    borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+    child: InkWell(
+      key: ValueKey('entry-${point.name}'),
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: mobile ? 8 : 14,
+          vertical: mobile ? 5 : 10,
+        ),
+        decoration: BoxDecoration(
+          border: Border.all(color: AppTokens.line),
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+        ),
+        child: mobile
+            ? Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: AppTokens.greenSoft,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(
+                      _entryIcon(point),
+                      color: AppTokens.navy,
+                      size: 19,
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    copy.entryPointTitle(point),
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontSize: 14,
+                      height: 1.25,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              )
+            : Row(
+                children: [
+                  Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: AppTokens.greenSoft,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      _entryIcon(point),
+                      color: AppTokens.navy,
+                      size: 21,
+                    ),
+                  ),
+                  const SizedBox(width: 11),
+                  Expanded(
+                    child: Text(
+                      copy.entryPointTitle(point),
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontSize: 14,
+                        height: 1.35,
+                      ),
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Icon(
+                    Directionality.of(context) == TextDirection.rtl
+                        ? Icons.arrow_back_ios_new_rounded
+                        : Icons.arrow_forward_ios_rounded,
+                    size: 13,
+                    color: AppTokens.muted,
+                  ),
+                ],
+              ),
+      ),
+    ),
+  );
+
+  IconData _entryIcon(HomeEntryPoint point) => switch (point) {
+    HomeEntryPoint.exporter => Icons.outbound_outlined,
+    HomeEntryPoint.importer => Icons.input_rounded,
+    HomeEntryPoint.vehicles => Icons.directions_car_outlined,
+    HomeEntryPoint.jobs => Icons.work_outline_rounded,
+    HomeEntryPoint.community => Icons.groups_outlined,
+    HomeEntryPoint.leopard => Icons.local_shipping_outlined,
+  };
+
+  void _openEntryPoint(
+    BuildContext context,
+    AppCopy copy,
+    HomeEntryPoint point,
+  ) {
+    final cubit = context.read<HomeCubit>();
+    if (point == HomeEntryPoint.community) {
+      cubit.selectTab(2);
+      return;
+    }
+    if (point == HomeEntryPoint.vehicles) {
+      openVehicleImport(context, copy);
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => EntryPointPreviewScreen(
+          entryPoint: point,
+          copy: copy,
+          workspace: _workspace,
+          sectors: cubit.state.sectors,
+          companies: cubit.state.featuredCompanies,
+          onExploreSectors: () {
+            Navigator.of(context).pop();
+            cubit.selectTab(1);
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _sectors(
+    BuildContext context,
+    AppCopy copy,
+    List<Sector> sectors, {
+    required bool mobile,
+    required ValueChanged<Sector> onSectorSelected,
+    required VoidCallback onSeeAll,
+  }) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      SectionHeading(
+        title: copy.sectorsTitle,
+        subtitle: copy.sectorsSubtitle,
+        action: copy.seeAll,
+        onAction: onSeeAll,
+      ),
+      GridView.builder(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: sectors.length,
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: mobile ? 2 : 4,
+          mainAxisExtent: _scaledCardHeight(context, mobile ? 94 : 98),
+          crossAxisSpacing: 12,
+          mainAxisSpacing: 12,
+        ),
+        itemBuilder: (context, index) {
+          final sector = sectors[index];
+          return _sectorCard(
+            context,
+            sector,
+            copy.isArabic,
+            onTap: () => onSectorSelected(sector),
+          );
+        },
+      ),
+    ],
+  );
+
+  Widget _sectorCard(
+    BuildContext context,
+    Sector sector,
+    bool arabic, {
+    required VoidCallback onTap,
+  }) => Material(
+    color: AppTokens.white,
+    borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+    child: InkWell(
+      key: ValueKey('sector-${sector.id}'),
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          border: Border.all(color: AppTokens.line),
+          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: sector.tint,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(sector.icon, color: AppTokens.navy, size: 21),
+            ),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Text(
+                arabic ? sector.titleAr : sector.titleEn,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontSize: 13, height: 1.3),
+              ),
+            ),
+            const SizedBox(width: 4),
+            Icon(
+              Directionality.of(context) == TextDirection.rtl
+                  ? Icons.arrow_back_ios_new_rounded
+                  : Icons.arrow_forward_ios_rounded,
+              size: 12,
+              color: AppTokens.muted,
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+
+  Widget _companies(
+    BuildContext context,
+    AppCopy copy,
+    List<Company> companies, {
+    required bool mobile,
+    required bool tablet,
+    required VoidCallback onSeeAll,
+  }) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      SectionHeading(
+        title: copy.featuredTitle,
+        subtitle: copy.featuredSubtitle,
+        action: copy.seeAll,
+        onAction: onSeeAll,
+      ),
+      if (companies.isEmpty)
+        AppStatePanel(
+          state: AppViewState.empty,
+          copy: copy,
+          message: copy.noCompanies,
+          actionLabel: copy.seeAll,
+          onAction: onSeeAll,
+        )
+      else
         Wrap(
           spacing: 14,
           runSpacing: 14,
           children: companies
               .map(
                 (company) => SizedBox(
-                  width: mobile ? double.infinity : 330,
-                  child: _companyCard(context, company, copy),
+                  width: mobile
+                      ? double.infinity
+                      : tablet
+                      ? 320
+                      : 340,
+                  child: CompanyCard(
+                    company: company,
+                    copy: copy,
+                    onPrimaryAction: () => _openCompany(context, copy, company),
+                  ),
                 ),
               )
               .toList(),
         ),
-      ],
+    ],
+  );
+
+  void _openCompany(BuildContext context, AppCopy copy, Company company) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CompanyDetailsScreen(company: company, copy: copy),
+      ),
     );
   }
 
-  Widget _companyCard(BuildContext context, Company company, AppCopy copy) =>
-      Container(
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          color: AppTokens.white,
-          border: Border.all(color: AppTokens.line),
-          borderRadius: BorderRadius.circular(AppTokens.radiusMd),
+  void _openSector(
+    BuildContext context,
+    AppCopy copy,
+    Sector sector,
+    List<Company> companies,
+  ) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SectorDetailsScreen(
+          sector: sector,
+          companies: companies,
+          copy: copy,
+          onHome: () {
+            Navigator.of(context).pop();
+            context.read<HomeCubit>().selectTab(0);
+          },
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: Color(company.accent).withValues(alpha: .1),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Center(
-                    child: Text(
-                      company.initials,
-                      style: TextStyle(
-                        color: Color(company.accent),
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        company.name,
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      Text(
-                        company.category,
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
-                    ],
-                  ),
-                ),
-                Icon(
-                  Icons.bookmark_border_rounded,
-                  color: AppTokens.muted,
-                  size: 20,
-                ),
-              ],
-            ),
-            const SizedBox(height: 18),
-            Row(
-              children: [
-                const Icon(
-                  Icons.location_on_outlined,
-                  size: 16,
-                  color: AppTokens.muted,
-                ),
-                const SizedBox(width: 5),
-                Expanded(
-                  child: Text(
-                    company.location,
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppTokens.greenSoft,
-                    borderRadius: BorderRadius.circular(AppTokens.radiusPill),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(
-                        Icons.verified_rounded,
-                        size: 12,
-                        color: AppTokens.green,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        copy.verified,
-                        style: const TextStyle(
-                          color: AppTokens.green,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            const Divider(height: 1),
-            const SizedBox(height: 12),
-            Text(
-              copy.mockLabel,
-              style: const TextStyle(fontSize: 10, color: AppTokens.muted),
-            ),
-          ],
-        ),
-      );
+      ),
+    );
+  }
+
+  Widget _homeStatusContent(
+    BuildContext context,
+    HomeState state,
+    AppCopy copy,
+  ) {
+    final homeCubit = context.read<HomeCubit>();
+    final viewState = switch (state.status) {
+      HomeStatus.initial || HomeStatus.loading => AppViewState.loading,
+      HomeStatus.empty => AppViewState.empty,
+      HomeStatus.error => AppViewState.error,
+      HomeStatus.offline => AppViewState.offline,
+      HomeStatus.expired => AppViewState.expired,
+      HomeStatus.permissionDenied => AppViewState.permissionDenied,
+      HomeStatus.loaded => null,
+    };
+    if (viewState == null) return const SizedBox.shrink();
+
+    final canRetry = switch (viewState) {
+      AppViewState.error || AppViewState.offline => true,
+      _ => false,
+    };
+    final canChangeDestination =
+        viewState == AppViewState.expired ||
+        viewState == AppViewState.permissionDenied ||
+        viewState == AppViewState.empty;
+    final destinationTab = state.selectedTab == 0 ? 1 : 0;
+    return AppStatePanel(
+      state: viewState,
+      copy: copy,
+      message: viewState == AppViewState.empty ? copy.homeEmpty : null,
+      actionLabel: canChangeDestination
+          ? destinationTab == 1
+                ? copy.exploreSectors
+                : copy.homeLabel
+          : null,
+      onAction: canRetry
+          ? homeCubit.loadHome
+          : canChangeDestination
+          ? () => homeCubit.selectTab(destinationTab)
+          : null,
+    );
+  }
 
   Widget _footer(BuildContext context, AppCopy copy) => Container(
     color: AppTokens.navyDeep,
-    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 26),
+    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 22),
     child: Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: AppTokens.maxContentWidth),
-        child: Row(
+        child: Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          runSpacing: 10,
           children: [
-            _brand(copy),
-            const Spacer(),
-            Flexible(
-              child: Text(
-                copy.footer,
-                textAlign: TextAlign.end,
-                style: const TextStyle(color: Color(0xFFB8C7D2), fontSize: 12),
-              ),
+            _brand(copy, onDarkSurface: true),
+            Text(
+              copy.footer,
+              style: const TextStyle(color: Color(0xFFDAE5EC), fontSize: 13),
             ),
           ],
         ),
@@ -784,103 +1010,155 @@ class HomeScreen extends StatelessWidget {
     ),
   );
 
-  Widget _mobileNav(BuildContext context, AppCopy copy, int selectedTab) =>
-      NavigationBar(
-        selectedIndex: selectedTab,
-        onDestinationSelected: context.read<HomeCubit>().selectTab,
-        destinations: [
-          NavigationDestination(
-            icon: const Icon(Icons.hub_outlined),
-            selectedIcon: const Icon(Icons.hub_rounded),
-            label: copy.network,
-          ),
-          NavigationDestination(
-            icon: const Icon(Icons.business_outlined),
-            selectedIcon: const Icon(Icons.business_rounded),
-            label: copy.directory,
-          ),
-          NavigationDestination(
-            icon: const Icon(Icons.work_outline_rounded),
-            selectedIcon: const Icon(Icons.work_rounded),
-            label: copy.opportunities,
-          ),
-          NavigationDestination(
-            icon: const Icon(Icons.person_outline_rounded),
-            selectedIcon: const Icon(Icons.person_rounded),
-            label: copy.profile,
-          ),
+  Widget _mobileNavigation(
+    BuildContext context,
+    AppCopy copy,
+    int selectedTab,
+  ) => NavigationBar(
+    selectedIndex: selectedTab,
+    onDestinationSelected: context.read<HomeCubit>().selectTab,
+    destinations: [
+      NavigationDestination(
+        icon: const Icon(Icons.home_outlined),
+        selectedIcon: const Icon(Icons.home_rounded),
+        label: copy.homeTab,
+      ),
+      NavigationDestination(
+        icon: const Icon(Icons.explore_outlined),
+        selectedIcon: const Icon(Icons.explore_rounded),
+        label: copy.discoverTab,
+      ),
+      NavigationDestination(
+        icon: const Icon(Icons.groups_outlined),
+        selectedIcon: const Icon(Icons.groups_rounded),
+        label: copy.communityTab,
+      ),
+      NavigationDestination(
+        icon: const Icon(Icons.forum_outlined),
+        selectedIcon: const Icon(Icons.forum_rounded),
+        label: copy.messagesTab,
+      ),
+      NavigationDestination(
+        icon: const Icon(Icons.person_outline_rounded),
+        selectedIcon: const Icon(Icons.person_rounded),
+        label: copy.myAccountTab,
+      ),
+    ],
+  );
+
+  Widget _pageHeading(BuildContext context, String title, String description) =>
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: Theme.of(context).textTheme.headlineMedium),
+          const SizedBox(height: 6),
+          Text(description, style: Theme.of(context).textTheme.bodyLarge),
         ],
       );
 
-  Widget _homeStatusContent(HomeState state, AppCopy copy) {
-    switch (state.status) {
-      case HomeStatus.initial:
-      case HomeStatus.loading:
-        return Center(
-          child: Padding(
-            padding: EdgeInsets.symmetric(vertical: 40),
-            child: CircularProgressIndicator(semanticsLabel: copy.homeLoading),
-          ),
-        );
-      case HomeStatus.empty:
-        return Padding(
-          padding: EdgeInsets.symmetric(vertical: 40),
-          child: Center(child: Text(copy.homeEmpty)),
-        );
-      case HomeStatus.error:
-        return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 40),
-          child: Center(child: Text(copy.homeLoadError)),
-        );
-      case HomeStatus.loaded:
-        return const SizedBox.shrink();
-    }
-  }
+  Widget _contentFrame({
+    required bool mobile,
+    required bool tablet,
+    required Widget child,
+  }) => Center(
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: AppTokens.maxContentWidth),
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: mobile
+              ? 16
+              : tablet
+              ? 24
+              : 40,
+        ),
+        child: child,
+      ),
+    ),
+  );
 
-  void _showSearch(BuildContext context, AppCopy copy) =>
+  Future<void> _showSearch(BuildContext context, AppCopy copy) =>
       showModalBottomSheet<void>(
         context: context,
         isScrollControlled: true,
-        builder: (context) => Padding(
-          padding: EdgeInsets.fromLTRB(
-            20,
-            24,
-            20,
-            MediaQuery.viewInsetsOf(context).bottom + 24,
-          ),
-          child: IndexSearchField(hint: copy.searchHint),
+        builder: (sheetContext) => _SearchSheet(
+          copy: copy,
+          initialQuery: context.read<HomeCubit>().state.searchQuery,
+          onChanged: context.read<HomeCubit>().setSearchQuery,
+          onSearch: (query) {
+            context.read<HomeCubit>().setSearchQuery(query);
+            context.read<HomeCubit>().selectTab(1);
+            Navigator.of(sheetContext).pop();
+          },
         ),
       );
+
+  double _scaledCardHeight(BuildContext context, double baseHeight) {
+    final scale = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0);
+    return baseHeight * scale;
+  }
 }
 
-class _RoutePainter extends CustomPainter {
+class _SearchSheet extends StatefulWidget {
+  const _SearchSheet({
+    required this.copy,
+    required this.initialQuery,
+    required this.onChanged,
+    required this.onSearch,
+  });
+
+  final AppCopy copy;
+  final String initialQuery;
+  final ValueChanged<String> onChanged;
+  final ValueChanged<String> onSearch;
+
   @override
-  void paint(Canvas canvas, Size size) {
-    final path = Path()
-      ..moveTo(size.width * .12, size.height * .54)
-      ..cubicTo(
-        size.width * .37,
-        size.height * .34,
-        size.width * .57,
-        size.height * .77,
-        size.width * .88,
-        size.height * .45,
-      );
-    final line = Paint()
-      ..color = const Color(0xFF77BCA4)
-      ..strokeWidth = 2
-      ..style = PaintingStyle.stroke;
-    canvas.drawPath(path, line);
-    final dots = Paint()..color = const Color(0xFFA3D4C2);
-    for (final t in [.12, .27, .42, .58, .73, .88]) {
-      final metric = path.computeMetrics().first;
-      final tangent = metric.getTangentForOffset(metric.length * t);
-      if (tangent != null) {
-        canvas.drawCircle(tangent.position, t == .58 ? 4 : 2.5, dots);
-      }
-    }
+  State<_SearchSheet> createState() => _SearchSheetState();
+}
+
+class _SearchSheetState extends State<_SearchSheet> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialQuery);
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: EdgeInsets.fromLTRB(
+      20,
+      24,
+      20,
+      MediaQuery.viewInsetsOf(context).bottom + 24,
+    ),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IndexSearchField(
+          hint: widget.copy.searchHint,
+          controller: _controller,
+          onChanged: (value) {
+            widget.onChanged(value);
+          },
+          onSubmitted: widget.onSearch,
+        ),
+        const SizedBox(height: 14),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: () => widget.onSearch(_controller.text),
+            icon: const Icon(Icons.search_rounded),
+            label: Text(widget.copy.discoverTab),
+          ),
+        ),
+      ],
+    ),
+  );
 }

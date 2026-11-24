@@ -74,24 +74,23 @@ void main() {
     await cubit.close();
   });
 
-  test(
-    'tracks selection within the existing four navigation destinations',
-    () async {
-      final cubit = HomeCubit(
-        _FakeHomeRepository(
-          sectors: Future.value(const []),
-          companies: Future.value(const []),
-        ),
-      );
+  test('tracks selection within the five navigation destinations', () async {
+    final cubit = HomeCubit(
+      _FakeHomeRepository(
+        sectors: Future.value(const []),
+        companies: Future.value(const []),
+      ),
+    );
 
-      cubit.selectTab(2);
-      expect(cubit.state.selectedTab, 2);
-      cubit.selectTab(4);
-      expect(cubit.state.selectedTab, 2);
+    cubit.selectTab(2);
+    expect(cubit.state.selectedTab, 2);
+    cubit.selectTab(4);
+    expect(cubit.state.selectedTab, 4);
+    cubit.selectTab(5);
+    expect(cubit.state.selectedTab, 4);
 
-      await cubit.close();
-    },
-  );
+    await cubit.close();
+  });
 }
 
 class _FakeHomeRepository implements HomeRepository {

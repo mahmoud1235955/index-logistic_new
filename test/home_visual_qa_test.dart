@@ -24,10 +24,7 @@ void main() {
     tester.view.physicalSize = const Size(800, 900);
     await tester.pumpWidget(const IndexLogisticsApp());
     await tester.pumpAndSettle();
-    tester
-        .element(find.byType(HomeScreen))
-        .read<AppCubit>()
-        .toggleLanguage();
+    tester.element(find.byType(HomeScreen)).read<AppCubit>().toggleLanguage();
     await tester.pumpAndSettle();
 
     expect(find.text('EN'), findsOneWidget);
@@ -37,15 +34,16 @@ void main() {
     );
   });
 
-  testWidgets('Home remains usable at 100%, 125%, and 150% text scale', (
+  testWidgets('Home avoids layout exceptions at V4 widths and text scales', (
     WidgetTester tester,
   ) async {
-    const scales = [1.0, 1.25, 1.5];
-    const widths = [390, 800, 1440];
+    const scales = [1.0, 1.25, 1.5, 2.0];
+    const widths = [360, 390, 768, 1280, 1440];
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    final failures = <String>[];
 
     for (final scale in scales) {
       tester.platformDispatcher.textScaleFactorTestValue = scale;
@@ -68,15 +66,15 @@ void main() {
           while ((error = tester.takeException()) != null) {
             errors.add(error!);
           }
-          expect(
-            errors,
-            isEmpty,
-            reason:
-                'Home at ${width}px, ${isArabic ? 'RTL' : 'LTR'}, '
-                'text scale ${scale * 100}%',
-          );
+          if (errors.isNotEmpty) {
+            failures.add(
+              'Home at ${width}px, ${isArabic ? 'RTL' : 'LTR'}, '
+              'text scale ${scale * 100}%: ${errors.join('; ')}',
+            );
+          }
         }
       }
     }
+    expect(failures, isEmpty, reason: failures.join('\n'));
   });
 }

@@ -2,4 +2,4 @@ import 'package:flutter/material.dart';
 
 import 'app.dart';
 
-void main() => runApp(const IndexLogisticsApp());
+void main() => runApp(const IndexLogisticsApp(showSplash: true));

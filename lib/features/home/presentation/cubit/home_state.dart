@@ -3,7 +3,16 @@ import 'package:equatable/equatable.dart';
 import '../../../../features/directory/domain/company.dart';
 import '../../domain/sector.dart';
 
-enum HomeStatus { initial, loading, loaded, empty, error }
+enum HomeStatus {
+  initial,
+  loading,
+  loaded,
+  empty,
+  error,
+  offline,
+  expired,
+  permissionDenied,
+}
 
 class HomeState extends Equatable {
   const HomeState({
@@ -11,6 +20,7 @@ class HomeState extends Equatable {
     this.sectors = const [],
     this.featuredCompanies = const [],
     this.selectedTab = 0,
+    this.searchQuery = '',
     this.errorMessage,
   });
 
@@ -18,6 +28,7 @@ class HomeState extends Equatable {
   final List<Sector> sectors;
   final List<Company> featuredCompanies;
   final int selectedTab;
+  final String searchQuery;
   final String? errorMessage;
 
   HomeState copyWith({
@@ -25,6 +36,7 @@ class HomeState extends Equatable {
     List<Sector>? sectors,
     List<Company>? featuredCompanies,
     int? selectedTab,
+    String? searchQuery,
     String? errorMessage,
     bool clearError = false,
   }) {
@@ -33,6 +45,7 @@ class HomeState extends Equatable {
       sectors: sectors ?? this.sectors,
       featuredCompanies: featuredCompanies ?? this.featuredCompanies,
       selectedTab: selectedTab ?? this.selectedTab,
+      searchQuery: searchQuery ?? this.searchQuery,
       errorMessage: clearError ? null : errorMessage ?? this.errorMessage,
     );
   }
@@ -43,6 +56,7 @@ class HomeState extends Equatable {
     sectors,
     featuredCompanies,
     selectedTab,
+    searchQuery,
     errorMessage,
   ];
 }

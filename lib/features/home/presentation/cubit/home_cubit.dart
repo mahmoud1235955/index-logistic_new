@@ -22,6 +22,13 @@ class HomeCubit extends Cubit<HomeState> {
           clearError: true,
         ),
       );
+    } on HomeRepositoryException catch (error) {
+      emit(
+        state.copyWith(
+          status: _statusFor(error.kind),
+          errorMessage: error.toString(),
+        ),
+      );
     } catch (error) {
       emit(
         state.copyWith(
@@ -33,7 +40,19 @@ class HomeCubit extends Cubit<HomeState> {
   }
 
   void selectTab(int index) {
-    if (index < 0 || index > 3 || index == state.selectedTab) return;
+    if (index < 0 || index > 4 || index == state.selectedTab) return;
     emit(state.copyWith(selectedTab: index));
   }
+
+  void setSearchQuery(String query) {
+    if (query == state.searchQuery) return;
+    emit(state.copyWith(searchQuery: query));
+  }
+
+  HomeStatus _statusFor(HomeRepositoryFailureKind kind) => switch (kind) {
+    HomeRepositoryFailureKind.error => HomeStatus.error,
+    HomeRepositoryFailureKind.offline => HomeStatus.offline,
+    HomeRepositoryFailureKind.expired => HomeStatus.expired,
+    HomeRepositoryFailureKind.permissionDenied => HomeStatus.permissionDenied,
+  };
 }
